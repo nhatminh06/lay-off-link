@@ -250,7 +250,7 @@ services:
   spark-master:
     profiles:
       - aide2
-    image: bitnami/spark:3.5.6
+    image: bitnamilegacy/spark:3.5.6
     container_name: spark-master
     environment:
       SPARK_MODE: master
@@ -263,7 +263,7 @@ services:
   spark-worker:
     profiles:
       - aide2
-    image: bitnami/spark:3.5.6
+    image: bitnamilegacy/spark:3.5.6
     container_name: spark-worker
     depends_on:
       - spark-master
