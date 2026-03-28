@@ -35,7 +35,7 @@ class PredictionRequest(BaseModel):
     features: list[float]
 
     class Config:
-        json_schema_extra = {"example": {"features": [5.1, 3.5, 1.4, 0.2]}}
+        schema_extra = {"example": {"features": [5.1, 3.5, 1.4, 0.2]}}
 
 
 class PredictionResponse(BaseModel):
