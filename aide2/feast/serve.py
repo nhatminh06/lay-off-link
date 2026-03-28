@@ -11,17 +11,17 @@ import logging
 import os
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 import pandas as pd
 from fastapi import FastAPI, HTTPException, Request, Response
-from feast import FeatureStore
-from feast.feature_view import FeatureView
-from feast.on_demand_feature_view import OnDemandFeatureView
 from prometheus_client import CONTENT_TYPE_LATEST, Counter, Histogram, generate_latest
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
+
+if TYPE_CHECKING:
+    from feast import FeatureStore
 
 logging.basicConfig(
     level=logging.INFO,
@@ -42,11 +42,13 @@ REQUEST_LATENCY_SECONDS = Histogram(
     buckets=(0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, float("inf")),
 )
 
-_store: Optional[FeatureStore] = None
+_store: Optional["FeatureStore"] = None
 
 
-def get_store() -> FeatureStore:
+def get_store() -> "FeatureStore":
     """Lazily construct the FeatureStore so import-time failures are avoided without config."""
+    from feast import FeatureStore
+
     global _store
     if _store is None:
         try:
@@ -191,6 +193,9 @@ def features_historical(body: HistoricalFeaturesBody) -> Dict[str, Any]:
 @app.get("/features/list")
 def features_list() -> Dict[str, Any]:
     """List registered feature views and on-demand feature views with schemas."""
+    from feast.feature_view import FeatureView
+    from feast.on_demand_feature_view import OnDemandFeatureView
+
     store = get_store()
     try:
         batch_views: List[Dict[str, Any]] = []
