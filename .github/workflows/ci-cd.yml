@@ -45,7 +45,7 @@ jobs:
 
   # Job 2: Unit Tests
   test:
-    name: Unit Tests
+    name: AIDE 1 Tests
     runs-on: ubuntu-latest
     needs: lint
     steps:
@@ -78,7 +78,7 @@ jobs:
           fi
 
       - name: Upload coverage artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: aide1-coverage-xml
           path: coverage.xml
@@ -155,7 +155,7 @@ jobs:
           password: ${{ secrets.DOCKER_PASSWORD }}
 
       - name: Build and push Docker image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         with:
           context: ./aide1
           file: ./aide1/Dockerfile
@@ -167,7 +167,7 @@ jobs:
           cache-to: type=registry,ref=${{ secrets.DOCKER_USERNAME }}/${{ env.DOCKER_IMAGE }}:buildcache,mode=max
 
       - name: Build and push Spark image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         with:
           context: ./aide2
           file: ./aide2/Dockerfile.spark
@@ -177,7 +177,7 @@ jobs:
             ${{ secrets.DOCKER_USERNAME }}/spark-jobs:latest
 
       - name: Build and push Flink image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         with:
           context: ./aide2
           file: ./aide2/Dockerfile.flink
@@ -187,7 +187,7 @@ jobs:
             ${{ secrets.DOCKER_USERNAME }}/flink-jobs:latest
 
       - name: Build and push Feast image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         with:
           context: ./aide2/feast
           push: true
@@ -196,7 +196,7 @@ jobs:
             ${{ secrets.DOCKER_USERNAME }}/feast-server:latest
 
       - name: Build and push AIDE 3 serving image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         with:
           context: .
           file: ./aide3/serving/Dockerfile
@@ -214,7 +214,7 @@ jobs:
 
       - name: Upload Trivy results to GitHub Security
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: 'trivy-results.sarif'
 
@@ -223,27 +223,28 @@ jobs:
     name: Deploy to Kubernetes
     runs-on: ubuntu-latest
     needs: build
-    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && secrets.KUBE_CONFIG != ''
     environment:
       name: production
       url: https://ml-app.example.com
+    env:
+      KUBECONFIG: ${{ github.workspace }}/kubeconfig
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
 
       - name: Set up kubectl
-        uses: azure/setup-kubectl@v3
+        uses: azure/setup-kubectl@v4
 
       - name: Configure kubectl
         run: |
-          echo "${{ secrets.KUBE_CONFIG }}" | base64 -d > kubeconfig
-          export KUBECONFIG=kubeconfig
+          echo "${{ secrets.KUBE_CONFIG }}" | base64 -d > "$KUBECONFIG"
+          kubectl config get-contexts
 
       - name: Update deployment image
         run: |
           kubectl set image deployment/ml-app-deployment \
-            ml-app=${{ secrets.DOCKER_USERNAME }}/${{ env.DOCKER_IMAGE }}:${{ env.DOCKER_TAG }} \
-            --record
+            ml-app=${{ secrets.DOCKER_USERNAME }}/${{ env.DOCKER_IMAGE }}:${{ env.DOCKER_TAG }}
 
       - name: Wait for rollout
         run: |
@@ -272,7 +273,7 @@ jobs:
           flags: --out json=results.json
 
       - name: Upload performance results
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: performance-results
           path: results.json
