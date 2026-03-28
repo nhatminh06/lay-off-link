@@ -223,7 +223,7 @@ jobs:
     name: Deploy to Kubernetes
     runs-on: ubuntu-latest
     needs: build
-    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && secrets.KUBE_CONFIG != ''
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     environment:
       name: production
       url: https://ml-app.example.com
@@ -236,22 +236,36 @@ jobs:
       - name: Set up kubectl
         uses: azure/setup-kubectl@v4
 
+      - name: Check kubeconfig secret
+        id: kubeconfig_check
+        run: |
+          if [ -z "${{ secrets.KUBE_CONFIG }}" ]; then
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "KUBE_CONFIG secret is empty. Skipping deploy steps."
+          else
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Configure kubectl
+        if: steps.kubeconfig_check.outputs.enabled == 'true'
         run: |
           echo "${{ secrets.KUBE_CONFIG }}" | base64 -d > "$KUBECONFIG"
           kubectl config get-contexts
 
       - name: Update deployment image
+        if: steps.kubeconfig_check.outputs.enabled == 'true'
         run: |
           kubectl set image deployment/ml-app-deployment \
             ml-app=${{ secrets.DOCKER_USERNAME }}/${{ env.DOCKER_IMAGE }}:${{ env.DOCKER_TAG }}
 
       - name: Wait for rollout
+        if: steps.kubeconfig_check.outputs.enabled == 'true'
         run: |
           kubectl rollout status deployment/ml-app-deployment
           kubectl get pods
 
       - name: Run smoke tests
+        if: steps.kubeconfig_check.outputs.enabled == 'true'
         run: |
           kubectl run smoke-test --rm -i --restart=Never --image=curlimages/curl -- \
             curl -f http://ml-app-service/health
