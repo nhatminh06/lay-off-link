@@ -1,0 +1,9 @@
+fastapi==0.109.0
+uvicorn==0.27.0
+pydantic==1.10.14
+requests==2.31.0
+prometheus-client==0.19.0
+kfp==2.8.0
+google-cloud-storage==2.16.0
+cloudevents==1.10.1
+
