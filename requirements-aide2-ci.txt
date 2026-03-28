@@ -13,5 +13,5 @@ prometheus-client==0.19.0
 kafka-python==2.0.2
 confluent-kafka==2.3.0
 feast==0.34.0
-dask==2023.5.0
+dask==2023.12.1
 

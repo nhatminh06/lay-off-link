@@ -44,8 +44,6 @@ ANOMALY_THRESHOLD = float(os.getenv("ANOMALY_THRESHOLD", "0.85"))
 class PredictionRequest(BaseModel):
     features: list[float] = Field(
         ...,
-        min_length=4,
-        max_length=4,
         description="Four feature values for online scoring.",
     )
 
@@ -117,6 +115,8 @@ async def metrics() -> Response:
 async def predict(request: PredictionRequest) -> PredictionResponse:
     started = datetime.now(tz=timezone.utc)
     try:
+        if len(request.features) != 4:
+            raise HTTPException(status_code=400, detail="Exactly 4 features are required.")
         prediction, score = _simple_score(request.features)
         request_id = str(uuid.uuid4())
         event_payload = {
