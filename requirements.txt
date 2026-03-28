@@ -2,7 +2,7 @@
 # Shared Dependencies
 # ============================================
 numpy==1.26.3
-pandas==2.2.0
+pandas==1.5.3
 matplotlib==3.8.2
 seaborn==0.13.1
 requests==2.31.0
