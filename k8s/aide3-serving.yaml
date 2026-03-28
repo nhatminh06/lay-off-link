@@ -1,0 +1,69 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: aide3-api
+  labels:
+    app: aide3-api
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: aide3-api
+  template:
+    metadata:
+      labels:
+        app: aide3-api
+    spec:
+      containers:
+      - name: aide3-api
+        image: aide3-serving:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8080
+        env:
+        - name: KNATIVE_BROKER_URL
+          value: "http://broker-ingress.knative-eventing.svc.cluster.local/default/default"
+        - name: AIDE3_EVENT_ENABLED
+          value: "true"
+        - name: ANOMALY_THRESHOLD
+          value: "0.85"
+        resources:
+          requests:
+            cpu: "200m"
+            memory: "256Mi"
+          limits:
+            cpu: "1"
+            memory: "1Gi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: aide3-api-service
+spec:
+  selector:
+    app: aide3-api
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080
+  type: ClusterIP
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: aide3-api-hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: aide3-api
+  minReplicas: 2
+  maxReplicas: 8
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+

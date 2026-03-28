@@ -1,0 +1,96 @@
+{
+  "dashboard": {
+    "title": "AIDE 2 - Data Engineering Pipeline",
+    "tags": ["aide2", "data-engineering"],
+    "panels": [
+      {
+        "id": 1,
+        "title": "MinIO - Objects Stored",
+        "type": "stat",
+        "targets": [{"expr": "minio_bucket_usage_total_bytes"}]
+      },
+      {
+        "id": 2,
+        "title": "MinIO - Request Rate",
+        "type": "graph",
+        "targets": [{"expr": "rate(minio_s3_requests_total[5m])"}]
+      },
+      {
+        "id": 3,
+        "title": "Kafka - Messages In/sec",
+        "type": "graph",
+        "targets": [{"expr": "rate(kafka_server_broker_topic_metrics_messages_in_total[5m])"}]
+      },
+      {
+        "id": 4,
+        "title": "Kafka - Consumer Lag",
+        "type": "graph",
+        "targets": [{"expr": "kafka_consumer_group_lag"}]
+      },
+      {
+        "id": 5,
+        "title": "Spark - Active Jobs",
+        "type": "stat",
+        "targets": [{"expr": "spark_active_jobs"}]
+      },
+      {
+        "id": 6,
+        "title": "Spark - Executor Memory Usage",
+        "type": "graph",
+        "targets": [{"expr": "spark_executor_memory_used_bytes"}]
+      },
+      {
+        "id": 7,
+        "title": "Flink - Running Jobs",
+        "type": "stat",
+        "targets": [{"expr": "flink_jobmanager_numRunningJobs"}]
+      },
+      {
+        "id": 8,
+        "title": "Flink - Checkpoint Duration",
+        "type": "graph",
+        "targets": [{"expr": "flink_jobmanager_job_lastCheckpointDuration"}]
+      },
+      {
+        "id": 9,
+        "title": "Flink - Records Processed/sec",
+        "type": "graph",
+        "targets": [{"expr": "rate(flink_taskmanager_job_task_numRecordsIn[5m])"}]
+      },
+      {
+        "id": 10,
+        "title": "Trino - Running Queries",
+        "type": "stat",
+        "targets": [{"expr": "trino_running_queries"}]
+      },
+      {
+        "id": 11,
+        "title": "Feast - Feature Retrieval Latency",
+        "type": "graph",
+        "targets": [{"expr": "histogram_quantile(0.95, rate(feast_request_duration_seconds_bucket[5m]))"}]
+      },
+      {
+        "id": 12,
+        "title": "Airflow - DAG Run Status",
+        "type": "stat",
+        "targets": [{"expr": "airflow_dag_run_duration_sum"}]
+      },
+      {
+        "id": 13,
+        "title": "Medallion Pipeline - Records by Layer",
+        "type": "graph",
+        "targets": [
+          {"expr": "medallion_bronze_records_total", "legendFormat": "Bronze"},
+          {"expr": "medallion_silver_records_total", "legendFormat": "Silver"},
+          {"expr": "medallion_gold_records_total", "legendFormat": "Gold"}
+        ]
+      },
+      {
+        "id": 14,
+        "title": "Anomaly Detection - Anomalies/min",
+        "type": "graph",
+        "targets": [{"expr": "rate(taxi_anomalies_total[5m]) * 60"}]
+      }
+    ]
+  }
+}

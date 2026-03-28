@@ -1,0 +1,12 @@
+aide3Api:
+  image: aide3-serving:latest
+  replicas: 2
+  port: 8080
+  anomalyThreshold: "0.85"
+
+anomalyConsumer:
+  image: aide3-serving:latest
+  replicas: 1
+  port: 8081
+  anomalyThreshold: "0.85"
+

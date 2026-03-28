@@ -1,0 +1,102 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: aide3-api
+spec:
+  replicas: {{ .Values.aide3Api.replicas }}
+  selector:
+    matchLabels:
+      app: aide3-api
+  template:
+    metadata:
+      labels:
+        app: aide3-api
+    spec:
+      containers:
+        - name: aide3-api
+          image: {{ .Values.aide3Api.image }}
+          ports:
+            - containerPort: {{ .Values.aide3Api.port }}
+          env:
+            - name: KNATIVE_BROKER_URL
+              value: "http://broker-ingress.knative-eventing.svc.cluster.local/default/default"
+            - name: AIDE3_EVENT_ENABLED
+              value: "true"
+            - name: ANOMALY_THRESHOLD
+              value: {{ .Values.aide3Api.anomalyThreshold | quote }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: aide3-api
+spec:
+  selector:
+    app: aide3-api
+  ports:
+    - port: {{ .Values.aide3Api.port }}
+      targetPort: {{ .Values.aide3Api.port }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: aide3-anomaly-consumer
+spec:
+  replicas: {{ .Values.anomalyConsumer.replicas }}
+  selector:
+    matchLabels:
+      app: aide3-anomaly-consumer
+  template:
+    metadata:
+      labels:
+        app: aide3-anomaly-consumer
+    spec:
+      containers:
+        - name: anomaly-consumer
+          image: {{ .Values.anomalyConsumer.image }}
+          command:
+            - uvicorn
+            - aide3.knative.event_consumer:app
+            - --host
+            - 0.0.0.0
+            - --port
+            - "{{ .Values.anomalyConsumer.port }}"
+          ports:
+            - containerPort: {{ .Values.anomalyConsumer.port }}
+          env:
+            - name: ANOMALY_THRESHOLD
+              value: {{ .Values.anomalyConsumer.anomalyThreshold | quote }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: aide3-anomaly-consumer
+spec:
+  selector:
+    app: aide3-anomaly-consumer
+  ports:
+    - port: {{ .Values.anomalyConsumer.port }}
+      targetPort: {{ .Values.anomalyConsumer.port }}
+---
+apiVersion: eventing.knative.dev/v1
+kind: Broker
+metadata:
+  name: default
+  namespace: default
+spec: {}
+---
+apiVersion: eventing.knative.dev/v1
+kind: Trigger
+metadata:
+  name: aide3-anomaly-trigger
+  namespace: default
+spec:
+  broker: default
+  filter:
+    attributes:
+      type: aide3.prediction.created
+  subscriber:
+    ref:
+      apiVersion: v1
+      kind: Service
+      name: aide3-anomaly-consumer
+

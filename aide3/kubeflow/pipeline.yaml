@@ -1,0 +1,16 @@
+apiVersion: pipelines.kubeflow.org/v1
+kind: Pipeline
+metadata:
+  name: aide3-training-pipeline
+spec:
+  description: Data prep -> train -> evaluate
+  steps:
+    - name: data-prep
+      image: python:3.11-slim
+      command: ["python", "-c", "print('data prep')"]
+    - name: train
+      image: python:3.11-slim
+      command: ["python", "-c", "print('train')"]
+    - name: evaluate
+      image: python:3.11-slim
+      command: ["python", "-c", "print('evaluate')"]

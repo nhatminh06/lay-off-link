@@ -1,0 +1,189 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: minio
+spec:
+  replicas: {{ .Values.minio.replicas }}
+  selector:
+    matchLabels:
+      app: minio
+  template:
+    metadata:
+      labels:
+        app: minio
+    spec:
+      containers:
+        - name: minio
+          image: {{ .Values.minio.image }}
+          args: ["server", "/data", "--console-address", ":{{ .Values.minio.consolePort }}"]
+          env:
+            - name: MINIO_ROOT_USER
+              value: minioadmin
+            - name: MINIO_ROOT_PASSWORD
+              value: minioadmin
+          ports:
+            - containerPort: {{ .Values.minio.apiPort }}
+            - containerPort: {{ .Values.minio.consolePort }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: minio
+spec:
+  selector:
+    app: minio
+  ports:
+    - name: api
+      port: {{ .Values.minio.apiPort }}
+      targetPort: {{ .Values.minio.apiPort }}
+    - name: console
+      port: {{ .Values.minio.consolePort }}
+      targetPort: {{ .Values.minio.consolePort }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: feast-server
+spec:
+  replicas: {{ .Values.feast.replicas }}
+  selector:
+    matchLabels:
+      app: feast-server
+  template:
+    metadata:
+      labels:
+        app: feast-server
+    spec:
+      containers:
+        - name: feast-server
+          image: {{ .Values.feast.image }}
+          ports:
+            - containerPort: {{ .Values.feast.port }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: feast-server
+spec:
+  selector:
+    app: feast-server
+  ports:
+    - port: {{ .Values.feast.port }}
+      targetPort: {{ .Values.feast.port }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: trino
+spec:
+  replicas: {{ .Values.trino.replicas }}
+  selector:
+    matchLabels:
+      app: trino
+  template:
+    metadata:
+      labels:
+        app: trino
+    spec:
+      containers:
+        - name: trino
+          image: {{ .Values.trino.image }}
+          ports:
+            - containerPort: {{ .Values.trino.port }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: trino
+spec:
+  selector:
+    app: trino
+  ports:
+    - port: {{ .Values.trino.port }}
+      targetPort: {{ .Values.trino.port }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: spark-master
+spec:
+  replicas: {{ .Values.spark.masterReplicas }}
+  selector:
+    matchLabels:
+      app: spark-master
+  template:
+    metadata:
+      labels:
+        app: spark-master
+    spec:
+      containers:
+        - name: spark-master
+          image: {{ .Values.spark.image }}
+          env:
+            - name: SPARK_MODE
+              value: master
+          ports:
+            - containerPort: {{ .Values.spark.masterPort }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: spark-worker
+spec:
+  replicas: {{ .Values.spark.workerReplicas }}
+  selector:
+    matchLabels:
+      app: spark-worker
+  template:
+    metadata:
+      labels:
+        app: spark-worker
+    spec:
+      containers:
+        - name: spark-worker
+          image: {{ .Values.spark.image }}
+          env:
+            - name: SPARK_MODE
+              value: worker
+            - name: SPARK_MASTER_URL
+              value: spark://spark-master:{{ .Values.spark.masterPort }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: flink-jobmanager
+spec:
+  replicas: {{ .Values.flink.jobmanagerReplicas }}
+  selector:
+    matchLabels:
+      app: flink-jobmanager
+  template:
+    metadata:
+      labels:
+        app: flink-jobmanager
+    spec:
+      containers:
+        - name: flink-jobmanager
+          image: {{ .Values.flink.image }}
+          args: ["jobmanager"]
+          ports:
+            - containerPort: {{ .Values.flink.webPort }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: flink-taskmanager
+spec:
+  replicas: {{ .Values.flink.taskmanagerReplicas }}
+  selector:
+    matchLabels:
+      app: flink-taskmanager
+  template:
+    metadata:
+      labels:
+        app: flink-taskmanager
+    spec:
+      containers:
+        - name: flink-taskmanager
+          image: {{ .Values.flink.image }}
+          args: ["taskmanager"]

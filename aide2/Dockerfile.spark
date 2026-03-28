@@ -1,0 +1,18 @@
+FROM bitnami/spark:3.5
+
+USER root
+
+RUN pip install --no-cache-dir \
+    delta-spark==3.0.0 \
+    boto3==1.34.0 \
+    pandas==2.2.0 \
+    pyarrow==15.0.0
+
+COPY spark/ /opt/spark-jobs/
+COPY ingestion/ /opt/spark-jobs/ingestion/
+
+ENV PYTHONPATH="/opt/spark-jobs:${PYTHONPATH}"
+
+USER 1001
+
+ENTRYPOINT ["spark-submit"]

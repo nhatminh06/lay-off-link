@@ -1,0 +1,273 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  DOCKER_IMAGE: ml-app
+  DOCKER_TAG: ${{ github.sha }}
+
+jobs:
+  # Job 1: Linting and Code Quality
+  lint:
+    name: Code Quality Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install flake8 "black==24.10.0" pylint
+
+      - name: Run Black formatter check
+        run: black --check .
+
+      - name: Run Flake8
+        run: flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+
+      - name: Run Pylint
+        run: pylint aide1/app.py aide1/api.py --fail-under=7.0 || true
+
+  # Job 2: Unit Tests
+  test:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run tests with coverage
+        run: |
+          pytest aide1/tests/ --cov=aide1 --cov-report=xml --cov-report=html --cov-report=term --cov-fail-under=80
+
+      - name: Check coverage threshold
+        run: |
+          COVERAGE=$(python -c "import xml.etree.ElementTree as ET; tree = ET.parse('coverage.xml'); root = tree.getroot(); print(float(root.attrib['line-rate']) * 100)")
+          echo "Test coverage: $COVERAGE%"
+          if (( $(echo "$COVERAGE < 80" | bc -l) )); then
+            echo "❌ Test coverage ($COVERAGE%) is below 80% threshold"
+            exit 1
+          else
+            echo "✅ Test coverage ($COVERAGE%) meets 80% threshold"
+          fi
+
+      - name: Upload coverage reports
+        uses: codecov/codecov-action@v3
+        with:
+          file: ./coverage.xml
+          flags: unittests
+          name: codecov-umbrella
+
+      - name: Comment coverage on PR
+        if: github.event_name == 'pull_request'
+        uses: py-cov-action/python-coverage-comment-action@v3
+        with:
+          GITHUB_TOKEN: ${{ github.token }}
+
+  # Job 2b: AIDE 2 Tests
+  test-aide2:
+    name: AIDE 2 Tests
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run AIDE 2 tests
+        run: |
+          pytest aide2/tests/ -v --cov=aide2 --cov-report=xml --cov-report=term
+
+  # Job 2c: AIDE 3 Tests
+  test-aide3:
+    name: AIDE 3 Tests
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run AIDE 3 tests
+        run: |
+          pytest aide3/tests/ -v --cov=aide3 --cov-report=xml --cov-report=term
+
+  # Job 3: Build Docker Images
+  build:
+    name: Build Docker Images
+    runs-on: ubuntu-latest
+    needs: [test, test-aide2, test-aide3]
+    if: success()
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./aide1
+          file: ./aide1/Dockerfile
+          push: true
+          tags: |
+            ${{ secrets.DOCKER_USERNAME }}/${{ env.DOCKER_IMAGE }}:${{ env.DOCKER_TAG }}
+            ${{ secrets.DOCKER_USERNAME }}/${{ env.DOCKER_IMAGE }}:latest
+          cache-from: type=registry,ref=${{ secrets.DOCKER_USERNAME }}/${{ env.DOCKER_IMAGE }}:buildcache
+          cache-to: type=registry,ref=${{ secrets.DOCKER_USERNAME }}/${{ env.DOCKER_IMAGE }}:buildcache,mode=max
+
+      - name: Build and push Spark image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./aide2
+          file: ./aide2/Dockerfile.spark
+          push: true
+          tags: |
+            ${{ secrets.DOCKER_USERNAME }}/spark-jobs:${{ env.DOCKER_TAG }}
+            ${{ secrets.DOCKER_USERNAME }}/spark-jobs:latest
+
+      - name: Build and push Flink image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./aide2
+          file: ./aide2/Dockerfile.flink
+          push: true
+          tags: |
+            ${{ secrets.DOCKER_USERNAME }}/flink-jobs:${{ env.DOCKER_TAG }}
+            ${{ secrets.DOCKER_USERNAME }}/flink-jobs:latest
+
+      - name: Build and push Feast image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./aide2/feast
+          push: true
+          tags: |
+            ${{ secrets.DOCKER_USERNAME }}/feast-server:${{ env.DOCKER_TAG }}
+            ${{ secrets.DOCKER_USERNAME }}/feast-server:latest
+
+      - name: Build and push AIDE 3 serving image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./aide3/serving/Dockerfile
+          push: true
+          tags: |
+            ${{ secrets.DOCKER_USERNAME }}/aide3-serving:${{ env.DOCKER_TAG }}
+            ${{ secrets.DOCKER_USERNAME }}/aide3-serving:latest
+
+      - name: Scan Docker image for vulnerabilities
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ secrets.DOCKER_USERNAME }}/${{ env.DOCKER_IMAGE }}:${{ env.DOCKER_TAG }}
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+
+      - name: Upload Trivy results to GitHub Security
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: 'trivy-results.sarif'
+
+  # Job 4: Deploy to Kubernetes
+  deploy:
+    name: Deploy to Kubernetes
+    runs-on: ubuntu-latest
+    needs: build
+    if: github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch'
+    environment:
+      name: production
+      url: https://ml-app.example.com
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v3
+
+      - name: Configure kubectl
+        run: |
+          echo "${{ secrets.KUBE_CONFIG }}" | base64 -d > kubeconfig
+          export KUBECONFIG=kubeconfig
+
+      - name: Update deployment image
+        run: |
+          kubectl set image deployment/ml-app-deployment \
+            ml-app=${{ secrets.DOCKER_USERNAME }}/${{ env.DOCKER_IMAGE }}:${{ env.DOCKER_TAG }} \
+            --record
+
+      - name: Wait for rollout
+        run: |
+          kubectl rollout status deployment/ml-app-deployment
+          kubectl get pods
+
+      - name: Run smoke tests
+        run: |
+          kubectl run smoke-test --rm -i --restart=Never --image=curlimages/curl -- \
+            curl -f http://ml-app-service/health
+
+  # Job 5: Performance Tests
+  performance:
+    name: Performance Testing
+    runs-on: ubuntu-latest
+    needs: deploy
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run k6 load test
+        uses: grafana/k6-action@v0.3.1
+        with:
+          filename: tests/load_test.js
+          flags: --out json=results.json
+
+      - name: Upload performance results
+        uses: actions/upload-artifact@v4
+        with:
+          name: performance-results
+          path: results.json

@@ -1,0 +1,35 @@
+# Feast feature store — NYC Taxi (dev: local provider; prod: see comments below)
+project: nyc_taxi_features
+
+# Registry on MinIO (S3-compatible). Ensure AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY
+# (or Feast env) point at MinIO; set AWS_ENDPOINT_URL for custom S3 endpoint.
+registry: s3://feast-registry/registry.db
+
+# Local provider for development. For GCP, switch to:
+#   provider: gcp
+# and configure offline_store (e.g. bigquery) / online_store (e.g. datastore) per Feast docs.
+provider: local
+
+online_store:
+  # Dev: embedded SQLite. For production, prefer Redis for low-latency serving, e.g.:
+  #   type: redis
+  #   connection_string: "redis://redis:6379"
+  type: sqlite
+  path: data/online_store.db
+
+offline_store:
+  # Dev: file-based (Dask/DuckDB-backed in Feast). For production, use Trino or Spark, e.g.:
+  #   type: trino
+  #   host: trino.example.com
+  #   port: 8080
+  #   catalog: hive
+  #   schema: gold
+  # or: type: spark with spark_conf / metastore settings
+  type: file
+
+# Entity key serialization (proto / binary): Feast v3 is the supported protobuf-style
+# encoding for online keys (recommended). Older v1/v2 string encodings are deprecated.
+entity_key_serialization_version: 3
+
+auth:
+  type: no_auth

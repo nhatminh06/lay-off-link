@@ -1,0 +1,6 @@
+apiVersion: v2
+name: aide2-platform
+description: Helm chart for AIDE 2 data engineering services
+type: application
+version: 0.1.0
+appVersion: "1.0.0"

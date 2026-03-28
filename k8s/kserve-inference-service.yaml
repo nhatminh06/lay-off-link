@@ -1,0 +1,30 @@
+apiVersion: serving.kserve.io/v1beta1
+kind: InferenceService
+metadata:
+  name: iris-classifier
+spec:
+  predictor:
+    minReplicas: 0
+    maxReplicas: 5
+    scaleTarget: 80
+    scaleMetric: concurrency
+    sklearn:
+      storageUri: "s3://mlflow-artifacts/models/iris-classifier"
+      resources:
+        requests:
+          cpu: 100m
+          memory: 256Mi
+        limits:
+          cpu: 1
+          memory: 1Gi
+  transformer:
+    containers:
+    - name: transformer
+      image: ml-app:latest
+      env:
+      - name: PREDICTOR_HOST
+        value: "iris-classifier-predictor-default"
+      resources:
+        requests:
+          cpu: 100m
+          memory: 256Mi

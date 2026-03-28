@@ -1,0 +1,77 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: trino
+  labels:
+    app: trino
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: trino
+  template:
+    metadata:
+      labels:
+        app: trino
+    spec:
+      containers:
+      - name: trino
+        image: trinodb/trino:latest
+        ports:
+        - containerPort: 8080
+          name: http
+        resources:
+          requests:
+            memory: "2Gi"
+            cpu: "1000m"
+          limits:
+            memory: "4Gi"
+            cpu: "2000m"
+        volumeMounts:
+        - name: trino-config
+          mountPath: /etc/trino/catalog/minio.properties
+          subPath: minio.properties
+        - name: trino-config
+          mountPath: /etc/trino/catalog/delta.properties
+          subPath: delta.properties
+      volumes:
+      - name: trino-config
+        configMap:
+          name: trino-catalog-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: trino-service
+spec:
+  type: ClusterIP
+  ports:
+  - port: 8080
+    targetPort: 8080
+  selector:
+    app: trino
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: trino-catalog-config
+data:
+  minio.properties: |
+    connector.name=hive
+    hive.metastore=file
+    hive.metastore.catalog.dir=s3a://lakehouse/
+    hive.s3.endpoint=http://minio-service:9000
+    hive.s3.aws-access-key=minioadmin
+    hive.s3.aws-secret-key=minioadmin
+    hive.s3.path-style-access=true
+    hive.s3.ssl.enabled=false
+  delta.properties: |
+    connector.name=delta_lake
+    hive.metastore=file
+    hive.metastore.catalog.dir=s3a://lakehouse/
+    delta.register-table-procedure.enabled=true
+    hive.s3.endpoint=http://minio-service:9000
+    hive.s3.aws-access-key=minioadmin
+    hive.s3.aws-secret-key=minioadmin
+    hive.s3.path-style-access=true
+    hive.s3.ssl.enabled=false

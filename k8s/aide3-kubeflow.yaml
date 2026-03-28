@@ -1,0 +1,39 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: aide3-kubeflow-pipeline-script
+data:
+  compile_pipeline.py: |
+    from pathlib import Path
+    from aide3.kubeflow.pipeline import compile_pipeline
+
+    output = Path("/workspace/pipeline.yaml")
+    compile_pipeline(output_path=output)
+    print(f"compiled: {output}")
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: aide3-pipeline-compiler
+spec:
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: compiler
+        image: python:3.11-slim
+        command:
+        - /bin/sh
+        - -c
+        - |
+          pip install --no-cache-dir kfp==2.8.0 &&
+          python /workspace/compile_pipeline.py
+        volumeMounts:
+        - name: pipeline-src
+          mountPath: /workspace
+      volumes:
+      - name: pipeline-src
+        configMap:
+          name: aide3-kubeflow-pipeline-script
+  backoffLimit: 1
+

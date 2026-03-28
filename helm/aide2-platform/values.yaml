@@ -1,0 +1,27 @@
+minio:
+  image: minio/minio:latest
+  replicas: 1
+  apiPort: 9000
+  consolePort: 9001
+
+feast:
+  image: feast-server:latest
+  replicas: 1
+  port: 6566
+
+trino:
+  image: trinodb/trino:latest
+  replicas: 1
+  port: 8080
+
+spark:
+  image: bitnami/spark:3.5
+  masterReplicas: 1
+  workerReplicas: 2
+  masterPort: 7077
+
+flink:
+  image: flink:1.18
+  jobmanagerReplicas: 1
+  taskmanagerReplicas: 2
+  webPort: 8081

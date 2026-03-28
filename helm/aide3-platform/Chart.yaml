@@ -1,0 +1,7 @@
+apiVersion: v2
+name: aide3-platform
+description: Helm chart for AIDE 3 Kubeflow + Knative serving components
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+

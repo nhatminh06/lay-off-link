@@ -1,0 +1,428 @@
+version: '3.8'
+
+services:
+  # --- Shared (no profile) ---
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    ports:
+      - '9090:9090'
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+    networks:
+      - devops-network
+    healthcheck:
+      test: ['CMD', 'wget', '--quiet', '--tries=1', '--spider', 'http://localhost:9090/-/healthy']
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  loki:
+    image: grafana/loki:2.9.3
+    container_name: loki
+    ports:
+      - '3100:3100'
+    command: -config.file=/etc/loki/local-config.yaml
+    volumes:
+      - ./monitoring/loki-config.yaml:/etc/loki/local-config.yaml
+      - loki-data:/loki
+    networks:
+      - devops-network
+
+  promtail:
+    image: grafana/promtail:2.9.3
+    container_name: promtail
+    volumes:
+      - /var/log:/var/log
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - ./monitoring/promtail-config.yaml:/etc/promtail/config.yaml
+    command: -config.file=/etc/promtail/config.yaml
+    depends_on:
+      - loki
+    networks:
+      - devops-network
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    ports:
+      - '3000:3000'
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards
+      - ./monitoring/grafana/datasources:/etc/grafana/provisioning/datasources
+    depends_on:
+      - prometheus
+      - loki
+    networks:
+      - devops-network
+
+  jaeger:
+    image: jaegertracing/all-in-one:1.52
+    container_name: jaeger
+    ports:
+      - '5775:5775/udp'
+      - '6831:6831/udp'
+      - '6832:6832/udp'
+      - '5778:5778'
+      - '16686:16686'
+      - '14268:14268'
+      - '14250:14250'
+      - '9411:9411'
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+    networks:
+      - devops-network
+
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:latest
+    container_name: cadvisor
+    ports:
+      - '8080:8080'
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+    privileged: true
+    networks:
+      - devops-network
+
+  nginx:
+    image: nginx:alpine
+    container_name: nginx-gateway
+    ports:
+      - '80:80'
+      - '443:443'
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf
+      - ./nginx/htpasswd:/etc/nginx/htpasswd
+    networks:
+      - devops-network
+
+  # --- Profile: aide1 ---
+  mlflow:
+    profiles:
+      - aide1
+    image: ghcr.io/mlflow/mlflow:v2.10.2
+    container_name: mlflow-server
+    ports:
+      - '5000:5000'
+    volumes:
+      - mlflow-data:/mlflow
+    command: >
+      mlflow server
+      --backend-store-uri sqlite:///mlflow/mlflow.db
+      --default-artifact-root /mlflow/artifacts
+      --host 0.0.0.0
+      --port 5000
+    networks:
+      - devops-network
+    healthcheck:
+      test: ['CMD', 'curl', '-f', 'http://localhost:5000/health']
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  ml-app:
+    profiles:
+      - aide1
+    build:
+      context: ./aide1
+      dockerfile: Dockerfile
+    container_name: ml-application
+    ports:
+      - '8000:8000'
+    environment:
+      - MLFLOW_TRACKING_URI=http://mlflow:5000
+      - PROMETHEUS_PORT=8000
+      - JAEGER_AGENT_HOST=jaeger
+      - JAEGER_AGENT_PORT=6831
+    depends_on:
+      - mlflow
+      - jaeger
+    volumes:
+      - ./aide1/data:/app/data
+      - ./aide1/models:/app/models
+    command: uvicorn api:app --host 0.0.0.0 --port 8000
+    networks:
+      - devops-network
+
+  # --- Profile: aide2 ---
+  minio:
+    profiles:
+      - aide2
+    image: minio/minio:latest
+    container_name: minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    ports:
+      - '9000:9000'
+      - '9001:9001'
+    volumes:
+      - minio-data:/data
+    networks:
+      - devops-network
+
+  minio-init:
+    profiles:
+      - aide2
+    image: minio/mc:latest
+    container_name: minio-init
+    depends_on:
+      - minio
+    entrypoint: /bin/sh
+    command: >
+      -c "
+      until mc alias set local http://minio:9000 minioadmin minioadmin; do sleep 1; done &&
+      mc mb -p local/raw-data || true &&
+      mc mb -p local/lakehouse || true &&
+      mc mb -p local/feast-registry || true &&
+      mc mb -p local/flink-checkpoints || true
+      "
+    networks:
+      - devops-network
+
+  zookeeper:
+    profiles:
+      - aide2
+    image: confluentinc/cp-zookeeper:7.5.3
+    container_name: zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - '2181:2181'
+    networks:
+      - devops-network
+
+  kafka:
+    profiles:
+      - aide2
+    image: confluentinc/cp-kafka:7.5.3
+    container_name: kafka
+    depends_on:
+      - zookeeper
+    ports:
+      - '9092:9092'
+      - '29092:29092'
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,PLAINTEXT_HOST://0.0.0.0:29092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+    networks:
+      - devops-network
+
+  kafka-init:
+    profiles:
+      - aide2
+    image: confluentinc/cp-kafka:7.5.3
+    container_name: kafka-init
+    depends_on:
+      - kafka
+    entrypoint: /bin/bash
+    command: >
+      -c "
+      sleep 10 &&
+      kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists --topic nyc-taxi-rides --partitions 3 --replication-factor 1 &&
+      kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists --topic taxi-stream-metrics --partitions 1 --replication-factor 1 &&
+      kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists --topic taxi-anomalies --partitions 1 --replication-factor 1 &&
+      kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists --topic data-ingestion-events --partitions 1 --replication-factor 1
+      "
+    networks:
+      - devops-network
+
+  spark-master:
+    profiles:
+      - aide2
+    image: bitnami/spark:3.5
+    container_name: spark-master
+    environment:
+      SPARK_MODE: master
+    ports:
+      - '7077:7077'
+      - '8081:8080'
+    networks:
+      - devops-network
+
+  spark-worker:
+    profiles:
+      - aide2
+    image: bitnami/spark:3.5
+    container_name: spark-worker
+    depends_on:
+      - spark-master
+    environment:
+      SPARK_MODE: worker
+      SPARK_MASTER_URL: spark://spark-master:7077
+      SPARK_WORKER_MEMORY: 2G
+      SPARK_WORKER_CORES: 2
+    volumes:
+      - spark-data:/opt/bitnami/spark/work
+    networks:
+      - devops-network
+
+  flink-jobmanager:
+    profiles:
+      - aide2
+    image: flink:1.18
+    container_name: flink-jobmanager
+    command: jobmanager
+    ports:
+      - '8082:8081'
+    volumes:
+      - ./aide2/configs/flink/flink-conf.yaml:/opt/flink/conf/flink-conf.yaml:ro
+    networks:
+      devops-network:
+        aliases:
+          - jobmanager
+
+  flink-taskmanager:
+    profiles:
+      - aide2
+    image: flink:1.18
+    container_name: flink-taskmanager
+    command: taskmanager
+    depends_on:
+      - flink-jobmanager
+    volumes:
+      - ./aide2/configs/flink/flink-conf.yaml:/opt/flink/conf/flink-conf.yaml:ro
+    networks:
+      - devops-network
+
+  trino:
+    profiles:
+      - aide2
+    image: trinodb/trino:latest
+    container_name: trino
+    ports:
+      - '8083:8080'
+    volumes:
+      - ./aide2/configs/trino:/etc/trino:ro
+    networks:
+      - devops-network
+
+  airflow-postgres:
+    profiles:
+      - aide2
+    image: postgres:15
+    container_name: airflow-postgres
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    ports:
+      - '5432:5432'
+    volumes:
+      - airflow-postgres-data:/var/lib/postgresql/data
+    networks:
+      - devops-network
+
+  airflow-webserver:
+    profiles:
+      - aide2
+    image: apache/airflow:2.8.1
+    container_name: airflow-webserver
+    depends_on:
+      - airflow-postgres
+    environment:
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@airflow-postgres/airflow
+    ports:
+      - '8084:8080'
+    volumes:
+      - ./aide2/airflow/dags:/opt/airflow/dags
+    command: webserver
+    networks:
+      - devops-network
+
+  airflow-scheduler:
+    profiles:
+      - aide2
+    image: apache/airflow:2.8.1
+    container_name: airflow-scheduler
+    depends_on:
+      - airflow-webserver
+    environment:
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@airflow-postgres/airflow
+    volumes:
+      - ./aide2/airflow/dags:/opt/airflow/dags
+    command: scheduler
+    networks:
+      - devops-network
+
+  feast-server:
+    profiles:
+      - aide2
+    build:
+      context: ./aide2/feast
+      dockerfile: Dockerfile
+    container_name: feast-server
+    ports:
+      - '6566:6566'
+    depends_on:
+      - minio
+    networks:
+      - devops-network
+
+  # --- Profile: aide3 ---
+  aide3-api:
+    profiles:
+      - aide3
+    build:
+      context: .
+      dockerfile: ./aide3/serving/Dockerfile
+    container_name: aide3-api
+    ports:
+      - '8088:8080'
+    environment:
+      - KNATIVE_BROKER_URL=http://aide3-anomaly-consumer:8081/events
+      - AIDE3_EVENT_ENABLED=true
+      - ANOMALY_THRESHOLD=0.85
+    networks:
+      - devops-network
+
+  aide3-anomaly-consumer:
+    profiles:
+      - aide3
+    build:
+      context: .
+      dockerfile: ./aide3/serving/Dockerfile
+    container_name: aide3-anomaly-consumer
+    command: uvicorn aide3.knative.event_consumer:app --host 0.0.0.0 --port 8081
+    ports:
+      - '8089:8081'
+    environment:
+      - ANOMALY_THRESHOLD=0.85
+    networks:
+      - devops-network
+
+networks:
+  devops-network:
+    driver: bridge
+
+volumes:
+  mlflow-data:
+  prometheus-data:
+  grafana-data:
+  loki-data:
+  minio-data:
+  kafka-data:
+  airflow-postgres-data:
+  spark-data:

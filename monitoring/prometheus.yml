@@ -1,0 +1,110 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    monitor: 'devops-ml-monitor'
+
+scrape_configs:
+  # Prometheus self-monitoring
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # ML Application metrics
+  - job_name: 'ml-app'
+    metrics_path: '/metrics'
+    static_configs:
+      - targets: ['ml-app:8000']
+        labels:
+          service: 'ml-api'
+
+  # cAdvisor container metrics
+  - job_name: 'cadvisor'
+    static_configs:
+      - targets: ['cadvisor:8080']
+        labels:
+          service: 'containers'
+
+  # MLflow metrics (AIDE 1)
+  - job_name: 'mlflow'
+    static_configs:
+      - targets: ['mlflow:5000']
+        labels:
+          service: 'mlflow'
+          aide: '1'
+
+  # AIDE 2: MinIO metrics
+  - job_name: 'minio'
+    metrics_path: '/minio/v2/metrics/cluster'
+    static_configs:
+      - targets: ['minio:9000']
+        labels:
+          service: 'minio'
+          aide: '2'
+
+  # AIDE 2: Spark metrics
+  - job_name: 'spark-master'
+    static_configs:
+      - targets: ['spark-master:8081']
+        labels:
+          service: 'spark'
+          aide: '2'
+
+  # AIDE 2: Flink metrics
+  - job_name: 'flink-jobmanager'
+    static_configs:
+      - targets: ['flink-jobmanager:8081']
+        labels:
+          service: 'flink'
+          aide: '2'
+
+  # AIDE 2: Kafka (JMX exporter if configured)
+  - job_name: 'kafka'
+    static_configs:
+      - targets: ['kafka:9092']
+        labels:
+          service: 'kafka'
+          aide: '2'
+
+  # AIDE 2: Trino metrics
+  - job_name: 'trino'
+    static_configs:
+      - targets: ['trino:8080']
+        labels:
+          service: 'trino'
+          aide: '2'
+
+  # AIDE 2: Feast Feature Server
+  - job_name: 'feast'
+    metrics_path: '/metrics'
+    static_configs:
+      - targets: ['feast-server:6566']
+        labels:
+          service: 'feast'
+          aide: '2'
+
+  # AIDE 2: Airflow (statsd exporter if configured)
+  - job_name: 'airflow'
+    static_configs:
+      - targets: ['airflow-webserver:8080']
+        labels:
+          service: 'airflow'
+          aide: '2'
+
+  # AIDE 3: FastAPI serving
+  - job_name: 'aide3-api'
+    metrics_path: '/metrics'
+    static_configs:
+      - targets: ['aide3-api:8080']
+        labels:
+          service: 'aide3-api'
+          aide: '3'
+
+  # AIDE 3: Knative anomaly consumer
+  - job_name: 'aide3-anomaly-consumer'
+    metrics_path: '/metrics'
+    static_configs:
+      - targets: ['aide3-anomaly-consumer:8081']
+        labels:
+          service: 'aide3-anomaly-consumer'
+          aide: '3'

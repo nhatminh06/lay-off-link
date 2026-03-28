@@ -1,0 +1,8 @@
+[core]
+    remote = storage
+['remote "storage"']
+    url = s3://lakehouse/dvc
+    endpointurl = http://localhost:9000
+    access_key_id = minioadmin
+    secret_access_key = minioadmin
+    use_ssl = false

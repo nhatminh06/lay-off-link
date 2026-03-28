@@ -1,0 +1,13 @@
+jobmanager.rpc.address: jobmanager
+jobmanager.rpc.port: 6123
+jobmanager.memory.process.size: 1600m
+taskmanager.memory.process.size: 2048m
+taskmanager.numberOfTaskSlots: 2
+parallelism.default: 2
+state.backend: rocksdb
+state.checkpoints.dir: s3://flink-checkpoints/checkpoints
+state.savepoints.dir: s3://flink-checkpoints/savepoints
+s3.endpoint: http://minio:9000
+s3.access-key: minioadmin
+s3.secret-key: minioadmin
+s3.path.style.access: true
