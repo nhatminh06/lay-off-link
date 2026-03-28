@@ -15,7 +15,7 @@ trino:
   port: 8080
 
 spark:
-  image: bitnami/spark:3.5
+  image: bitnami/spark:3.5.6
   masterReplicas: 1
   workerReplicas: 2
   masterPort: 7077

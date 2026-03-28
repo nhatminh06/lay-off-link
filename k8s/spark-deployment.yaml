@@ -16,7 +16,7 @@ spec:
     spec:
       containers:
       - name: spark-master
-        image: bitnami/spark:3.5
+        image: bitnami/spark:3.5.6
         ports:
         - containerPort: 7077
           name: master
@@ -51,7 +51,7 @@ spec:
     spec:
       containers:
       - name: spark-worker
-        image: bitnami/spark:3.5
+        image: bitnami/spark:3.5.6
         env:
         - name: SPARK_MODE
           value: worker
