@@ -32,7 +32,8 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install flake8 "black==24.10.0" pylint
+          pip install flake8 "black==24.10.0" pylint "setuptools<81"
+          pip install -r aide1/requirements.txt
 
       - name: Run Black formatter check
         run: black --check .
