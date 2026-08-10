@@ -41,7 +41,7 @@ jobs:
         run: flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
 
       - name: Run Pylint
-        run: pylint aide1/app.py aide1/api.py --fail-under=7.0 || true
+        run: pylint aide1/app.py aide1/api.py --fail-under=7.0
 
   # Job 2: Unit Tests
   test:
@@ -98,6 +98,12 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v5
 
+      - name: Set up Java (required by pyspark)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
@@ -110,7 +116,7 @@ jobs:
 
       - name: Run AIDE 2 tests
         run: |
-          pytest aide2/tests/ -v --cov=aide2 --cov-report=xml --cov-report=term
+          pytest aide2/tests/ -v --cov=aide2 --cov-report=xml --cov-report=term --cov-fail-under=35
 
   # Job 2c: AIDE 3 Tests
   test-aide3:
@@ -133,7 +139,7 @@ jobs:
 
       - name: Run AIDE 3 tests
         run: |
-          pytest aide3/tests/ -v --cov=aide3 --cov-report=xml --cov-report=term
+          pytest aide3/tests/ -v --cov=aide3 --cov-report=xml --cov-report=term --cov-fail-under=70
 
   # Job 3: Build Docker Images
   build:
@@ -205,25 +211,58 @@ jobs:
             ${{ secrets.DOCKER_USERNAME }}/aide3-serving:${{ env.DOCKER_TAG }}
             ${{ secrets.DOCKER_USERNAME }}/aide3-serving:latest
 
-      - name: Scan Docker image for vulnerabilities
-        uses: aquasecurity/trivy-action@master
+      - name: Scan ml-app image for vulnerabilities
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # v0.35.0
         with:
           image-ref: ${{ secrets.DOCKER_USERNAME }}/${{ env.DOCKER_IMAGE }}:${{ env.DOCKER_TAG }}
           format: 'sarif'
-          output: 'trivy-results.sarif'
+          output: 'trivy-ml-app.sarif'
+
+      - name: Scan spark-jobs image for vulnerabilities
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # v0.35.0
+        with:
+          image-ref: ${{ secrets.DOCKER_USERNAME }}/spark-jobs:${{ env.DOCKER_TAG }}
+          format: 'sarif'
+          output: 'trivy-spark-jobs.sarif'
+
+      - name: Scan flink-jobs image for vulnerabilities
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # v0.35.0
+        with:
+          image-ref: ${{ secrets.DOCKER_USERNAME }}/flink-jobs:${{ env.DOCKER_TAG }}
+          format: 'sarif'
+          output: 'trivy-flink-jobs.sarif'
+
+      - name: Scan feast-server image for vulnerabilities
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # v0.35.0
+        with:
+          image-ref: ${{ secrets.DOCKER_USERNAME }}/feast-server:${{ env.DOCKER_TAG }}
+          format: 'sarif'
+          output: 'trivy-feast-server.sarif'
+
+      - name: Scan aide3-serving image for vulnerabilities
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # v0.35.0
+        with:
+          image-ref: ${{ secrets.DOCKER_USERNAME }}/aide3-serving:${{ env.DOCKER_TAG }}
+          format: 'sarif'
+          output: 'trivy-aide3-serving.sarif'
 
       - name: Upload Trivy results to GitHub Security
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false
         uses: github/codeql-action/upload-sarif@v4
         with:
-          sarif_file: 'trivy-results.sarif'
+          sarif_file: |
+            trivy-ml-app.sarif
+            trivy-spark-jobs.sarif
+            trivy-flink-jobs.sarif
+            trivy-feast-server.sarif
+            trivy-aide3-serving.sarif
 
-  # Job 4: Deploy to Kubernetes
+  # Job 4: Deploy to Kubernetes (manual only — never runs on push)
   deploy:
     name: Deploy to Kubernetes
     runs-on: ubuntu-latest
     needs: build
-    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
     environment:
       name: production
       url: https://ml-app.example.com
@@ -236,58 +275,36 @@ jobs:
       - name: Set up kubectl
         uses: azure/setup-kubectl@v4
 
-      - name: Check kubeconfig secret
-        id: kubeconfig_check
+      - name: Require kubeconfig secret
         run: |
           if [ -z "${{ secrets.KUBE_CONFIG }}" ]; then
-            echo "enabled=false" >> "$GITHUB_OUTPUT"
-            echo "KUBE_CONFIG secret is empty. Skipping deploy steps."
-          else
-            echo "enabled=true" >> "$GITHUB_OUTPUT"
+            echo "::error::KUBE_CONFIG secret is not configured. A manual deploy was requested but there is no cluster credential to deploy with. Configure the KUBE_CONFIG repository secret (base64-encoded kubeconfig) before re-running this workflow."
+            exit 1
           fi
 
       - name: Configure kubectl
-        if: steps.kubeconfig_check.outputs.enabled == 'true'
         run: |
           echo "${{ secrets.KUBE_CONFIG }}" | base64 -d > "$KUBECONFIG"
           kubectl config get-contexts
 
       - name: Update deployment image
-        if: steps.kubeconfig_check.outputs.enabled == 'true'
         run: |
           kubectl set image deployment/ml-app-deployment \
             ml-app=${{ secrets.DOCKER_USERNAME }}/${{ env.DOCKER_IMAGE }}:${{ env.DOCKER_TAG }}
 
       - name: Wait for rollout
-        if: steps.kubeconfig_check.outputs.enabled == 'true'
         run: |
           kubectl rollout status deployment/ml-app-deployment
           kubectl get pods
 
       - name: Run smoke tests
-        if: steps.kubeconfig_check.outputs.enabled == 'true'
         run: |
           kubectl run smoke-test --rm -i --restart=Never --image=curlimages/curl -- \
             curl -f http://ml-app-service/health
 
-  # Job 5: Performance Tests
-  performance:
-    name: Performance Testing
-    runs-on: ubuntu-latest
-    needs: deploy
-    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v5
-
-      - name: Run k6 load test
-        uses: grafana/k6-action@v0.3.1
-        with:
-          filename: tests/load_test.js
-          flags: --out json=results.json
-
-      - name: Upload performance results
-        uses: actions/upload-artifact@v5
-        with:
-          name: performance-results
-          path: results.json
+  # NOTE: A "Performance Testing" job previously ran here, pointing at
+  # tests/load_test.js. That file does not exist anywhere in this repository,
+  # so the job could only ever fail (or silently pass against nothing once
+  # deploy was skipped). It has been removed rather than left as a job that
+  # always fails or misrepresents benchmark evidence. A real k6 script and a
+  # manually-triggered benchmark workflow are tracked as follow-up work.
