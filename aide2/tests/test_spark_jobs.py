@@ -122,9 +122,7 @@ class TestSilverBuildMergeKey:
         assert keys[0] != keys[1]
 
     def test_merge_key_falls_back_without_location_columns(self, spark):
-        df = spark.createDataFrame([_raw_row()], RAW_SCHEMA).drop(
-            "PULocationID", "DOLocationID"
-        )
+        df = spark.createDataFrame([_raw_row()], RAW_SCHEMA).drop("PULocationID", "DOLocationID")
         out = _build_merge_key(df)
         assert out.collect()[0]["merge_key"] is not None
 
@@ -290,7 +288,11 @@ def _gold_row(
 class TestGoldAggregation:
     def test_hourly_stats_aggregates_by_hour(self, spark):
         df = spark.createDataFrame(
-            [_gold_row(hour=8, fare=10.0), _gold_row(hour=8, fare=20.0), _gold_row(hour=9, fare=5.0)],
+            [
+                _gold_row(hour=8, fare=10.0),
+                _gold_row(hour=8, fare=20.0),
+                _gold_row(hour=9, fare=5.0),
+            ],
             GOLD_SCHEMA,
         )
         out = {r["hour_of_day"]: r for r in hourly_stats(df).collect()}
@@ -339,7 +341,10 @@ class TestGoldAggregation:
             [_gold_row(vendor=1, dow=2), _gold_row(vendor=1, dow=2), _gold_row(vendor=2, dow=3)],
             GOLD_SCHEMA,
         )
-        rows = {(r["VendorID"], r["day_of_week"]): r["trip_count"] for r in driver_patterns(df).collect()}
+        rows = {
+            (r["VendorID"], r["day_of_week"]): r["trip_count"]
+            for r in driver_patterns(df).collect()
+        }
         assert rows[(1, 2)] == 2
         assert rows[(2, 3)] == 1
 

@@ -274,7 +274,10 @@ class TestServeEndpoints:
         monkeypatch.setattr(self.serve, "get_store", lambda: fake_store)
         response = self.client.post(
             "/features/online",
-            json={"feature_refs": ["zone_features:zone_avg_fare"], "entity_rows": [{"location_id": 1}]},
+            json={
+                "feature_refs": ["zone_features:zone_avg_fare"],
+                "entity_rows": [{"location_id": 1}],
+            },
         )
         assert response.status_code == 200
         assert response.json()["features"]["avg_fare"] == [12.0]
