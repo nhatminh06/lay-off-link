@@ -48,3 +48,24 @@ class TestModelTraining:
 
         model, accuracy = train_model(n_estimators=100, max_depth=10)
         assert accuracy >= 0.85
+
+    @patch("app.mlflow")
+    def test_train_model_registers_model_for_serving(self, mock_mlflow):
+        """
+        api.py's model mode loads models:/iris-model/latest from the MLflow
+        Model Registry. That resolves to nothing unless training actually
+        registers under that name -- lock in that log_model is called with
+        registered_model_name="iris-model" so the two stay in sync.
+        """
+        mock_run = MagicMock()
+        mock_run.info.run_id = "test-run-id"
+        mock_run.info.artifact_uri = "test-artifact-uri"
+        mock_mlflow.active_run.return_value = mock_run
+        mock_mlflow.start_run.return_value.__enter__ = MagicMock(return_value=mock_run)
+        mock_mlflow.start_run.return_value.__exit__ = MagicMock(return_value=False)
+
+        train_model(n_estimators=10, max_depth=3)
+
+        mock_mlflow.sklearn.log_model.assert_called_once()
+        _, kwargs = mock_mlflow.sklearn.log_model.call_args
+        assert kwargs.get("registered_model_name") == "iris-model"
