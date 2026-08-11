@@ -185,32 +185,29 @@ fare_request_source = RequestSource(
 )
 
 
-@on_demand_feature_view(
-    name="fare_prediction_features",
-    entities=[taxi_zone],
-    sources=[zone_features, fare_request_source],
-    schema=[
-        Field(name="location_id", dtype=Int64),
-        Field(name="expected_fare_ratio", dtype=Float64),
-    ],
-    description="expected_fare_ratio = fare_amount / zone_avg_fare for the pickup zone.",
-    mode="pandas",
-)
-def fare_prediction_features(inputs: dict):
+def _compute_fare_ratio(zone_df, req_df):
     """
     Compute the ratio of observed fare to the zone's average fare.
 
+    Pulled out of ``fare_prediction_features`` so it can be unit tested directly.
+
+    Note: this previously used ``Series.replace(0, pd.NA)`` for the divide-by-zero
+    guard, which triggers infinite recursion (``RecursionError``) under the
+    pandas==1.5.3 / numpy==1.26.3 combination pinned for Feast compatibility in
+    this project (a real pandas internal dtype-coercion bug, unrelated to Feast).
+    Since this function was never actually invoked by any test, that bug shipped
+    silently. ``Series.where`` guards the same divide-by-zero case without hitting
+    the buggy code path.
+
     Args:
-        inputs: Feast-injected dict keyed by source name (`zone_features`, `fare_request`).
+        zone_df: DataFrame with a `zone_avg_fare` column.
+        req_df: DataFrame with `fare_amount` and `location_id` columns.
     """
     import pandas as pd
 
-    zone_df = inputs["zone_features"]
-    req_df = inputs["fare_request"]
-
     zone_avg = zone_df["zone_avg_fare"].astype("float64")
     fare = req_df["fare_amount"].astype("float64")
-    safe = zone_avg.replace(0, pd.NA)
+    safe = zone_avg.where(zone_avg != 0, other=float("nan"))
 
     ratio = (fare / safe).astype("float64")
 
@@ -220,3 +217,19 @@ def fare_prediction_features(inputs: dict):
             "expected_fare_ratio": ratio,
         }
     )
+
+
+@on_demand_feature_view(
+    sources=[zone_features, fare_request_source],
+    schema=[
+        Field(name="location_id", dtype=Int64),
+        Field(name="expected_fare_ratio", dtype=Float64),
+    ],
+    description="expected_fare_ratio = fare_amount / zone_avg_fare for the pickup zone.",
+)
+def fare_prediction_features(inputs: dict):
+    """
+    Args:
+        inputs: Feast-injected dict keyed by source name (`zone_features`, `fare_request`).
+    """
+    return _compute_fare_ratio(inputs["zone_features"], inputs["fare_request"])

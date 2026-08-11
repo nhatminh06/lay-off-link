@@ -216,12 +216,14 @@ def features_list() -> Dict[str, Any]:
         for od in store.list_on_demand_feature_views():
             if not isinstance(od, OnDemandFeatureView):
                 continue
+            # OnDemandFeatureView has no `entities` or `schema` attribute (unlike
+            # FeatureView) -- its inputs are the FeatureViews/RequestSources listed
+            # in `sources`, and its output fields are exposed via `.features`.
             odfvs.append(
                 {
                     "name": od.name,
                     "type": "on_demand_feature_view",
-                    "entities": list(od.entities),
-                    "schema": _fields_to_json(list(od.schema)),
+                    "schema": _fields_to_json(list(od.features)),
                 }
             )
 

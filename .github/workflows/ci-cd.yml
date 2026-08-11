@@ -6,10 +6,16 @@ on:
   pull_request:
     branches: [ main ]
   workflow_dispatch:
+    inputs:
+      image_tag:
+        description: >-
+          Immutable image tag to deploy (the git SHA a previous push-to-main
+          publish run built, e.g. from that run's DOCKER_TAG). Never "latest".
+        required: true
+        type: string
 
 permissions:
   contents: read
-  security-events: write
 
 env:
   DOCKER_IMAGE: ml-app
@@ -20,6 +26,8 @@ jobs:
   lint:
     name: Code Quality Check
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
@@ -32,7 +40,8 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install flake8 "black==24.10.0" pylint
+          pip install flake8 "black==24.10.0" pylint "setuptools<81"
+          pip install -r aide1/requirements.txt
 
       - name: Run Black formatter check
         run: black --check .
@@ -41,13 +50,15 @@ jobs:
         run: flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
 
       - name: Run Pylint
-        run: pylint aide1/app.py aide1/api.py --fail-under=7.0 || true
+        run: pylint aide1/app.py aide1/api.py --fail-under=7.0
 
   # Job 2: Unit Tests
   test:
     name: AIDE 1 Tests
     runs-on: ubuntu-latest
     needs: lint
+    permissions:
+      contents: read
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
@@ -66,37 +77,28 @@ jobs:
         run: |
           pytest aide1/tests/ --cov=aide1 --cov-report=xml --cov-report=html --cov-report=term --cov-fail-under=80
 
-      - name: Check coverage threshold
-        run: |
-          COVERAGE=$(python -c "import xml.etree.ElementTree as ET; tree = ET.parse('coverage.xml'); root = tree.getroot(); print(float(root.attrib['line-rate']) * 100)")
-          echo "Test coverage: $COVERAGE%"
-          if (( $(echo "$COVERAGE < 80" | bc -l) )); then
-            echo "❌ Test coverage ($COVERAGE%) is below 80% threshold"
-            exit 1
-          else
-            echo "✅ Test coverage ($COVERAGE%) meets 80% threshold"
-          fi
-
       - name: Upload coverage artifact
         uses: actions/upload-artifact@v5
         with:
           name: aide1-coverage-xml
           path: coverage.xml
 
-      - name: Comment coverage on PR
-        if: github.event_name == 'pull_request'
-        uses: py-cov-action/python-coverage-comment-action@v3
-        with:
-          GITHUB_TOKEN: ${{ github.token }}
-
   # Job 2b: AIDE 2 Tests
   test-aide2:
     name: AIDE 2 Tests
     runs-on: ubuntu-latest
     needs: lint
+    permissions:
+      contents: read
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
+
+      - name: Set up Java (required by pyspark)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
 
       - name: Set up Python
         uses: actions/setup-python@v6
@@ -110,13 +112,15 @@ jobs:
 
       - name: Run AIDE 2 tests
         run: |
-          pytest aide2/tests/ -v --cov=aide2 --cov-report=xml --cov-report=term
+          pytest aide2/tests/ -v --cov=aide2 --cov-report=xml --cov-report=term --cov-fail-under=35
 
   # Job 2c: AIDE 3 Tests
   test-aide3:
     name: AIDE 3 Tests
     runs-on: ubuntu-latest
     needs: lint
+    permissions:
+      contents: read
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
@@ -133,14 +137,151 @@ jobs:
 
       - name: Run AIDE 3 tests
         run: |
-          pytest aide3/tests/ -v --cov=aide3 --cov-report=xml --cov-report=term
+          pytest aide3/tests/ -v --cov=aide3 --cov-report=xml --cov-report=term --cov-fail-under=70
 
-  # Job 3: Build Docker Images
-  build:
-    name: Build Docker Images
+  # Job 3: Container Validation — builds and scans images locally.
+  # Runs on every PR and push. Never authenticates to Docker Hub and never
+  # pushes anything: push:false/load:true keeps images entirely on the
+  # runner, so updating a PR cannot mutate the registry.
+  container-validation:
+    name: Container Validation
     runs-on: ubuntu-latest
     needs: [test, test-aide2, test-aide3]
     if: success()
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build ml-app image (local only, not pushed)
+        uses: docker/build-push-action@v6
+        with:
+          context: ./aide1
+          file: ./aide1/Dockerfile
+          push: false
+          load: true
+          tags: ml-app:ci-${{ github.sha }}
+
+      - name: Build spark-jobs image (local only, not pushed)
+        uses: docker/build-push-action@v6
+        with:
+          context: ./aide2
+          file: ./aide2/Dockerfile.spark
+          push: false
+          load: true
+          tags: spark-jobs:ci-${{ github.sha }}
+
+      - name: Build flink-jobs image (local only, not pushed)
+        uses: docker/build-push-action@v6
+        with:
+          context: ./aide2
+          file: ./aide2/Dockerfile.flink
+          push: false
+          load: true
+          tags: flink-jobs:ci-${{ github.sha }}
+
+      - name: Build feast-server image (local only, not pushed)
+        uses: docker/build-push-action@v6
+        with:
+          context: ./aide2/feast
+          push: false
+          load: true
+          tags: feast-server:ci-${{ github.sha }}
+
+      - name: Build aide3-serving image (local only, not pushed)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./aide3/serving/Dockerfile
+          push: false
+          load: true
+          tags: aide3-serving:ci-${{ github.sha }}
+
+      - name: Scan ml-app image for vulnerabilities
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # v0.35.0
+        with:
+          image-ref: ml-app:ci-${{ github.sha }}
+          format: 'sarif'
+          output: 'trivy-ml-app.sarif'
+
+      - name: Scan spark-jobs image for vulnerabilities
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # v0.35.0
+        with:
+          image-ref: spark-jobs:ci-${{ github.sha }}
+          format: 'sarif'
+          output: 'trivy-spark-jobs.sarif'
+
+      - name: Scan flink-jobs image for vulnerabilities
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # v0.35.0
+        with:
+          image-ref: flink-jobs:ci-${{ github.sha }}
+          format: 'sarif'
+          output: 'trivy-flink-jobs.sarif'
+
+      - name: Scan feast-server image for vulnerabilities
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # v0.35.0
+        with:
+          image-ref: feast-server:ci-${{ github.sha }}
+          format: 'sarif'
+          output: 'trivy-feast-server.sarif'
+
+      - name: Scan aide3-serving image for vulnerabilities
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # v0.35.0
+        with:
+          image-ref: aide3-serving:ci-${{ github.sha }}
+          format: 'sarif'
+          output: 'trivy-aide3-serving.sarif'
+
+      - name: Upload ml-app Trivy results to GitHub Security
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: trivy-ml-app.sarif
+          category: trivy-ml-app
+
+      - name: Upload spark-jobs Trivy results to GitHub Security
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: trivy-spark-jobs.sarif
+          category: trivy-spark-jobs
+
+      - name: Upload flink-jobs Trivy results to GitHub Security
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: trivy-flink-jobs.sarif
+          category: trivy-flink-jobs
+
+      - name: Upload feast-server Trivy results to GitHub Security
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: trivy-feast-server.sarif
+          category: trivy-feast-server
+
+      - name: Upload aide3-serving Trivy results to GitHub Security
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: trivy-aide3-serving.sarif
+          category: trivy-aide3-serving
+
+  # Job 4: Publish Images — the ONLY job that authenticates to Docker Hub or
+  # writes to the registry. Gated to trusted push events on main; never runs
+  # for pull_request. Publishes immutable SHA tags only (no :latest).
+  publish:
+    name: Publish Images
+    runs-on: ubuntu-latest
+    needs: container-validation
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
@@ -154,81 +295,64 @@ jobs:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
-      - name: Build and push Docker image
+      - name: Build and push ml-app image
         uses: docker/build-push-action@v6
         with:
           context: ./aide1
           file: ./aide1/Dockerfile
           push: true
-          tags: |
-            ${{ secrets.DOCKER_USERNAME }}/${{ env.DOCKER_IMAGE }}:${{ env.DOCKER_TAG }}
-            ${{ secrets.DOCKER_USERNAME }}/${{ env.DOCKER_IMAGE }}:latest
+          tags: ${{ secrets.DOCKER_USERNAME }}/${{ env.DOCKER_IMAGE }}:${{ env.DOCKER_TAG }}
           cache-from: type=registry,ref=${{ secrets.DOCKER_USERNAME }}/${{ env.DOCKER_IMAGE }}:buildcache
           cache-to: type=registry,ref=${{ secrets.DOCKER_USERNAME }}/${{ env.DOCKER_IMAGE }}:buildcache,mode=max
 
-      - name: Build and push Spark image
+      - name: Build and push spark-jobs image
         uses: docker/build-push-action@v6
         with:
           context: ./aide2
           file: ./aide2/Dockerfile.spark
           push: true
-          tags: |
-            ${{ secrets.DOCKER_USERNAME }}/spark-jobs:${{ env.DOCKER_TAG }}
-            ${{ secrets.DOCKER_USERNAME }}/spark-jobs:latest
+          tags: ${{ secrets.DOCKER_USERNAME }}/spark-jobs:${{ env.DOCKER_TAG }}
 
-      - name: Build and push Flink image
+      - name: Build and push flink-jobs image
         uses: docker/build-push-action@v6
         with:
           context: ./aide2
           file: ./aide2/Dockerfile.flink
           push: true
-          tags: |
-            ${{ secrets.DOCKER_USERNAME }}/flink-jobs:${{ env.DOCKER_TAG }}
-            ${{ secrets.DOCKER_USERNAME }}/flink-jobs:latest
+          tags: ${{ secrets.DOCKER_USERNAME }}/flink-jobs:${{ env.DOCKER_TAG }}
 
-      - name: Build and push Feast image
+      - name: Build and push feast-server image
         uses: docker/build-push-action@v6
         with:
           context: ./aide2/feast
           push: true
-          tags: |
-            ${{ secrets.DOCKER_USERNAME }}/feast-server:${{ env.DOCKER_TAG }}
-            ${{ secrets.DOCKER_USERNAME }}/feast-server:latest
+          tags: ${{ secrets.DOCKER_USERNAME }}/feast-server:${{ env.DOCKER_TAG }}
 
-      - name: Build and push AIDE 3 serving image
+      - name: Build and push aide3-serving image
         uses: docker/build-push-action@v6
         with:
           context: .
           file: ./aide3/serving/Dockerfile
           push: true
-          tags: |
-            ${{ secrets.DOCKER_USERNAME }}/aide3-serving:${{ env.DOCKER_TAG }}
-            ${{ secrets.DOCKER_USERNAME }}/aide3-serving:latest
+          tags: ${{ secrets.DOCKER_USERNAME }}/aide3-serving:${{ env.DOCKER_TAG }}
 
-      - name: Scan Docker image for vulnerabilities
-        uses: aquasecurity/trivy-action@master
-        with:
-          image-ref: ${{ secrets.DOCKER_USERNAME }}/${{ env.DOCKER_IMAGE }}:${{ env.DOCKER_TAG }}
-          format: 'sarif'
-          output: 'trivy-results.sarif'
-
-      - name: Upload Trivy results to GitHub Security
-        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false
-        uses: github/codeql-action/upload-sarif@v4
-        with:
-          sarif_file: 'trivy-results.sarif'
-
-  # Job 4: Deploy to Kubernetes
+  # Job 5: Deploy to Kubernetes (manual only — never runs on push).
+  # Deliberately independent of publish: a deploy targets an immutable tag
+  # from *some* earlier trusted publish run, supplied explicitly via
+  # workflow_dispatch's image_tag input, not implicitly re-derived from
+  # whatever commit happens to trigger this dispatch.
   deploy:
     name: Deploy to Kubernetes
     runs-on: ubuntu-latest
-    needs: build
-    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
     environment:
       name: production
       url: https://ml-app.example.com
     env:
       KUBECONFIG: ${{ github.workspace }}/kubeconfig
+      IMAGE_TAG: ${{ inputs.image_tag }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
@@ -236,58 +360,40 @@ jobs:
       - name: Set up kubectl
         uses: azure/setup-kubectl@v4
 
-      - name: Check kubeconfig secret
-        id: kubeconfig_check
+      - name: Require kubeconfig secret and a real image tag
         run: |
           if [ -z "${{ secrets.KUBE_CONFIG }}" ]; then
-            echo "enabled=false" >> "$GITHUB_OUTPUT"
-            echo "KUBE_CONFIG secret is empty. Skipping deploy steps."
-          else
-            echo "enabled=true" >> "$GITHUB_OUTPUT"
+            echo "::error::KUBE_CONFIG secret is not configured. A manual deploy was requested but there is no cluster credential to deploy with. Configure the KUBE_CONFIG repository secret (base64-encoded kubeconfig) before re-running this workflow."
+            exit 1
+          fi
+          if [ -z "$IMAGE_TAG" ] || [ "$IMAGE_TAG" = "latest" ]; then
+            echo "::error::image_tag must be an immutable tag (e.g. a git SHA published by the publish job), not empty or 'latest'."
+            exit 1
           fi
 
       - name: Configure kubectl
-        if: steps.kubeconfig_check.outputs.enabled == 'true'
         run: |
           echo "${{ secrets.KUBE_CONFIG }}" | base64 -d > "$KUBECONFIG"
           kubectl config get-contexts
 
       - name: Update deployment image
-        if: steps.kubeconfig_check.outputs.enabled == 'true'
         run: |
           kubectl set image deployment/ml-app-deployment \
-            ml-app=${{ secrets.DOCKER_USERNAME }}/${{ env.DOCKER_IMAGE }}:${{ env.DOCKER_TAG }}
+            ml-app=${{ secrets.DOCKER_USERNAME }}/${{ env.DOCKER_IMAGE }}:${{ env.IMAGE_TAG }}
 
       - name: Wait for rollout
-        if: steps.kubeconfig_check.outputs.enabled == 'true'
         run: |
           kubectl rollout status deployment/ml-app-deployment
           kubectl get pods
 
       - name: Run smoke tests
-        if: steps.kubeconfig_check.outputs.enabled == 'true'
         run: |
           kubectl run smoke-test --rm -i --restart=Never --image=curlimages/curl -- \
             curl -f http://ml-app-service/health
 
-  # Job 5: Performance Tests
-  performance:
-    name: Performance Testing
-    runs-on: ubuntu-latest
-    needs: deploy
-    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v5
-
-      - name: Run k6 load test
-        uses: grafana/k6-action@v0.3.1
-        with:
-          filename: tests/load_test.js
-          flags: --out json=results.json
-
-      - name: Upload performance results
-        uses: actions/upload-artifact@v5
-        with:
-          name: performance-results
-          path: results.json
+  # NOTE: A "Performance Testing" job previously ran here, pointing at
+  # tests/load_test.js. That file does not exist anywhere in this repository,
+  # so the job could only ever fail (or silently pass against nothing once
+  # deploy was skipped). It has been removed rather than left as a job that
+  # always fails or misrepresents benchmark evidence. A real k6 script and a
+  # manually-triggered benchmark workflow are tracked as follow-up work.
