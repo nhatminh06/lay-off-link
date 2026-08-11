@@ -247,16 +247,40 @@ jobs:
           format: 'sarif'
           output: 'trivy-aide3-serving.sarif'
 
-      - name: Upload Trivy results to GitHub Security
+      - name: Upload ml-app Trivy results to GitHub Security
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false
         uses: github/codeql-action/upload-sarif@v4
         with:
-          sarif_file: |
-            trivy-ml-app.sarif
-            trivy-spark-jobs.sarif
-            trivy-flink-jobs.sarif
-            trivy-feast-server.sarif
-            trivy-aide3-serving.sarif
+          sarif_file: trivy-ml-app.sarif
+          category: trivy-ml-app
+
+      - name: Upload spark-jobs Trivy results to GitHub Security
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: trivy-spark-jobs.sarif
+          category: trivy-spark-jobs
+
+      - name: Upload flink-jobs Trivy results to GitHub Security
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: trivy-flink-jobs.sarif
+          category: trivy-flink-jobs
+
+      - name: Upload feast-server Trivy results to GitHub Security
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: trivy-feast-server.sarif
+          category: trivy-feast-server
+
+      - name: Upload aide3-serving Trivy results to GitHub Security
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: trivy-aide3-serving.sarif
+          category: trivy-aide3-serving
 
   # Job 4: Deploy to Kubernetes (manual only — never runs on push)
   deploy:
