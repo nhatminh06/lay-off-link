@@ -50,7 +50,7 @@ def train_model(n_estimators=100, max_depth=5, experiment_name="iris-classificat
         mlflow.log_metric("recall", recall)
         mlflow.log_metric("f1_score", f1)
 
-        mlflow.sklearn.log_model(model, "model")
+        mlflow.sklearn.log_model(model, "model", registered_model_name="iris-model")
 
         feature_importance = dict(zip(iris.feature_names, model.feature_importances_))
         for feature, importance in feature_importance.items():
